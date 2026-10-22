@@ -1,0 +1,16 @@
+; *****************************************************************************
+; Bootloader 专用分散加载文件（32KB）
+; Keil: Options -> Linker -> 取消 "Use Memory Layout from Target Dialog"
+;       -> Scatter File 选择本文件
+; *****************************************************************************
+LR_IROM1 0x08000000 0x00008000  {
+  ER_IROM1 0x08000000 0x00008000  {
+   *.o (RESET, +First)
+   *(InRoot$$Sections)
+   .ANY (+RO)
+   .ANY (+XO)
+  }
+  RW_IRAM1 0x20000000 0x00020000  {
+   .ANY (+RW +ZI)
+  }
+}

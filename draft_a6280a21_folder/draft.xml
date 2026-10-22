@@ -1,0 +1,278 @@
+<title>WeatherClock 智能天气时钟项目说明文档</title>
+
+<h1 seq="auto">项目概览：这个项目做了什么</h1>
+<p>WeatherClock 是一个全开源的嵌入式天气时钟项目，主控为 STM32F407VETx（Cortex-M4），运行 FreeRTOS 实时操作系统。它把一块 240x320 的 ST7789 彩屏、一颗 AHT20 温湿度传感器、一个 ESP8266 WiFi 模块和一个带 LSE 晶振的硬件 RTC 组合起来，在桌面上实现了一台能显示「网络校时的时间日期、室内温湿度、室外天气」的智能时钟。</p>
+<p>项目配套 B 站教学视频《全开源手把手项目实战：基于FreeRTOS的stm32智能天气时钟》，源码按「应用层 / 驱动层 / 系统层」分层组织，代码量小、结构清晰，适合作为 STM32 + FreeRTOS 的入门到进阶实战项目阅读与复现。</p>
+
+<h2 seq="auto">功能特性</h2>
+<table>
+<colgroup><col width="0.24"/><col width="0.46"/><col width="0.30"/></colgroup>
+<thead><tr><th><p>功能</p></th><th><p>实现方式</p></th><th><p>涉及模块</p></th></tr></thead>
+<tbody>
+<tr><td><p>实时时钟显示</p></td><td><p>ESP8266 通过 SNTP 从网络获取时间写入硬件 RTC，页面每秒刷新；冒号按秒闪烁</p></td><td><p>app.c / esp_at / rtc / main_page</p></td></tr>
+<tr><td><p>室内温湿度</p></td><td><p>AHT20 传感器通过 I2C2 采集，每 3 秒刷新</p></td><td><p>app.c / aht20 / main_page</p></td></tr>
+<tr><td><p>室外天气</p></td><td><p>ESP8266 HTTP GET 心知天气 API，解析 JSON 后每分钟刷新温度与天气图标</p></td><td><p>app.c / esp_at / weather / main_page</p></td></tr>
+<tr><td><p>WiFi 连接状态</p></td><td><p>每 5 秒查询连接状态，断线时页面提示 wifi lost</p></td><td><p>app.c / esp_at / main_page</p></td></tr>
+<tr><td><p>多页面 UI</p></td><td><p>欢迎页 → WiFi 连接页 → 主页；初始化或联网失败进入错误页</p></td><td><p>page 目录 / ui / st7789</p></td></tr>
+<tr><td><p>调试日志</p></td><td><p>USART1 115200 输出系统日志（printf 重定向，DMA 发送）</p></td><td><p>board.c / console</p></td></tr>
+</tbody>
+</table>
+
+<h2 seq="auto">成品界面</h2>
+<p>屏幕共 4 个页面，下面三张为仓库自带的 UI 设计稿（resources/design 目录），对应开机欢迎页、WiFi 连接页和主页：</p>
+<ol>
+<li><p>欢迎页：梅花 LOGO + 项目名「梅花嵌入式 天气时钟」+ loading 提示；</p></li>
+<li><p>WiFi 连接页：显示目标 SSID 与「连接中」状态；</p></li>
+<li><p>主页：上方白色区域显示时间/日期/WiFi 名，左下浅蓝色区域显示室内温度与湿度，右侧橙色区域显示室外城市、温度与天气图标；</p></li>
+<li><p>错误页：初始化或联网失败时显示错误信息（黄字）。</p></li>
+</ol>
+<img path="@./resources/design/欢迎页.png" caption="欢迎页设计稿"/>
+<img path="@./resources/design/WiFi连接页.png" caption="WiFi 连接页设计稿"/>
+<img path="@./resources/design/主页.png" caption="主页设计稿：时间日期 + 室内温湿度 + 室外天气"/>
+
+<h1 seq="auto">项目结构</h1>
+<h2 seq="auto">目录总览</h2>
+<p>项目根目录为 WeatherClock-main，源码按职责分层，Keil 工程位于 mdk 目录：</p>
+<pre lang="text"><code>WeatherClock-main
+├── app/                  # 应用层：业务逻辑、UI 渲染、页面、字库、图标
+│   ├── main.c            # 程序入口，创建 init 任务并启动调度器
+│   ├── board.c           # 板级初始化：时钟/外设/printf 重定向/FreeRTOS 钩子
+│   ├── app.c             # 核心业务：5 个周期任务的编排
+│   ├── ui.c              # UI 消息队列（填充/文字/图片三类渲染命令）
+│   ├── workqueue.c       # 工作队列：把耗时工作串行化到独立任务
+│   ├── wifi.c            # WiFi 初始化与等待连接
+│   ├── weather.c         # 心知天气 JSON 响应解析
+│   ├── font/             # 9 套点阵字库（16~76 号 Maple 字体）
+│   ├── image/            # 图标与位图资源（天气图标、梅花 LOGO 等）
+│   └── page/             # 页面：welcome_page / wifi_page / main_page / error_page
+├── driver/               # 驱动层：外设驱动
+│   ├── esp_at/           # ESP8266 AT 指令封装（WiFi/SNTP/HTTP）
+│   ├── st7789/           # ST7789 彩屏驱动（SPI2 + DMA）
+│   ├── aht20/            # AHT20 温湿度传感器（I2C2）
+│   ├── rtc/              # STM32 硬件 RTC（LSE 时钟）
+│   ├── tim_delay/        # TIM6 微秒级延时与时间基准
+│   ├── console/          # USART1 调试串口（DMA 发送）
+│   ├── led/  key/        # 预留的 LED 与按键驱动
+│   └── bl24c512/         # 预留的 EEPROM 驱动（头文件占位）
+├── firmware/             # 芯片固件层：CMSIS 头文件 + STM32F4 标准外设库
+├── third_lib/            # 第三方库：FreeRTOS 内核（V10.x 源码 + heap_4 内存管理）
+├── mdk/                  # Keil MDK 工程（stm32f407.uvprojx）与编译产物
+├── resources/            # UI 设计稿（design）与图标原图（images）
+├── tools/                # 辅助工具：中文字库转换脚本
+└── docs/                 # 项目文档与图片
+</code></pre>
+
+<h2 seq="auto">各目录职责</h2>
+<table>
+<colgroup><col width="0.22"/><col width="0.46"/><col width="0.32"/></colgroup>
+<thead><tr><th><p>目录</p></th><th><p>职责</p></th><th><p>关键内容</p></th></tr></thead>
+<tbody>
+<tr><td><p>app</p></td><td><p>业务与 UI：任务编排、页面渲染、数据解析、字库图标资源</p></td><td><p>main.c / app.c / ui.c / page/</p></td></tr>
+<tr><td><p>driver</p></td><td><p>外设驱动：把寄存器操作封装成简洁 API</p></td><td><p>esp_at / st7789 / aht20 / rtc / tim_delay / console</p></td></tr>
+<tr><td><p>firmware</p></td><td><p>芯片支持：CMSIS 内核头文件、STM32F4 标准外设库、启动文件</p></td><td><p>cmsis / stm32f4xx_*.c</p></td></tr>
+<tr><td><p>third_lib</p></td><td><p>FreeRTOS 实时内核与移植层</p></td><td><p>tasks / queue / timers / heap_4 / port</p></td></tr>
+<tr><td><p>mdk</p></td><td><p>Keil 工程文件、链接映射、编译产物（.axf）</p></td><td><p>stm32f407.uvprojx</p></td></tr>
+<tr><td><p>resources</p></td><td><p>UI 设计稿与图标素材（PNG/JPG）</p></td><td><p>design/ 四个页面设计图</p></td></tr>
+<tr><td><p>tools</p></td><td><p>字库转换工具：把字模文本转为 C 结构体数组</p></td><td><p>convert_chinese_font.py</p></td></tr>
+</tbody>
+</table>
+
+<h1 seq="auto">系统架构与运行机制</h1>
+<h2 seq="auto">分层架构</h2>
+<p>系统从下到上分为硬件层、系统层（FreeRTOS）、驱动层和应用层。应用层通过「队列 + 独立任务」与驱动层解耦：UI 渲染命令全部投递到 ui 任务串行执行，耗时业务（网络、传感器）投递到 workqueue 任务执行，互不阻塞：</p>
+<whiteboard type="mermaid">
+flowchart TB
+    subgraph APP["应用层 app/"]
+        INIT["main_init 任务：启动流程编排"]
+        WQ["workqueue 任务：串行执行耗时工作"]
+        UI["ui 任务：屏幕渲染"]
+        TIM["软件定时器 x5：校时/联网/走时/室内/室外"]
+        PAGES["页面层：欢迎 / WiFi / 主页 / 错误"]
+    end
+    subgraph DRV["驱动层 driver/"]
+        ESP["esp_at：ESP8266 AT 指令"]
+        LCD["st7789：LCD SPI+DMA"]
+        AHT["aht20：I2C 温湿度"]
+        RT["rtc：LSE 硬件时钟"]
+        CON["console：USART1 日志"]
+    end
+    subgraph OS["系统层 third_lib/freertos"]
+        FRT["FreeRTOS 内核：任务 / 队列 / 信号量 / 软件定时器"]
+    end
+    subgraph HW["硬件层"]
+        MCU["STM32F407VETx"]
+        ESPHW["ESP8266 模块"]
+        LCDHW["ST7789 屏 240x320"]
+        AHTHW["AHT20 传感器"]
+    end
+    MCU --- FRT
+    FRT --- INIT
+    FRT --- WQ
+    FRT --- UI
+    INIT --> PAGES
+    INIT --> TIM
+    TIM --> WQ
+    WQ --> ESP
+    WQ --> AHT
+    WQ --> RT
+    UI --> LCD
+    CON --- MCU
+    ESP <--> ESPHW
+    LCD <--> LCDHW
+    AHT <--> AHTHW
+    ESPHW --- NET["WiFi / SNTP 校时 / 心知天气 API"]
+</whiteboard>
+<p>运行中的关键角色与优先级：init 任务（优先级 9）负责启动编排后自杀；ui 任务（优先级 8）独占屏幕；workqueue 任务（优先级 5）串行执行所有网络与传感器工作，避免并发访问外设；软件定时器由 FreeRTOS 定时器守护任务统一调度。</p>
+
+<h2 seq="auto">上电启动流程</h2>
+<ol>
+<li><p>main()：board_lowlevel_init 开启各外设时钟与 LSE 晶振 → workqueue_init 创建工作队列 → 创建 init 任务 → vTaskStartScheduler 启动调度器；</p></li>
+<li><p>init 任务：board_init（延时/串口/RTC/AHT20 初始化）→ ui_init → 显示欢迎页；</p></li>
+<li><p>wifi_init：ESP8266 复位、配置 Station 模式、配置 SNTP，任一步失败进入错误页；</p></li>
+<li><p>wifi_wait_connect：连接目标 WiFi，轮询 10 秒，成功进入下一步，超时进入错误页；</p></li>
+<li><p>main_page_display 绘制主页静态布局 → app_init 创建 5 个软件定时器并预跑一轮 → init 任务结束。</p></li>
+</ol>
+
+<h2 seq="auto">周期任务</h2>
+<table>
+<colgroup><col width="0.22"/><col width="0.14"/><col width="0.40"/><col width="0.24"/></colgroup>
+<thead><tr><th><p>任务</p></th><th><p>周期</p></th><th><p>行为</p></th><th><p>失败处理</p></th></tr></thead>
+<tbody>
+<tr><td><p>time_update</p></td><td><p>1 秒</p></td><td><p>读 RTC，变化时重绘时间与日期（冒号闪烁）</p></td><td><p>年份小于 2020 视为未校时，跳过刷新</p></td></tr>
+<tr><td><p>time_sync</p></td><td><p>首次 200ms，之后 1 小时</p></td><td><p>ESP8266 SNTP 取网络时间写入 RTC</p></td><td><p>失败改为 1 秒后重试</p></td></tr>
+<tr><td><p>wifi_update</p></td><td><p>5 秒</p></td><td><p>查询 WiFi 连接状态，变化时重绘 SSID</p></td><td><p>查询失败仅打印日志</p></td></tr>
+<tr><td><p>inner_update</p></td><td><p>3 秒</p></td><td><p>AHT20 测量室内温湿度并重绘</p></td><td><p>测量失败打印日志，等下一轮</p></td></tr>
+<tr><td><p>outdoor_update</p></td><td><p>1 分钟</p></td><td><p>HTTP 请求心知天气 API，解析后重绘室外温度与天气图标</p></td><td><p>请求或解析失败打印日志，等下一轮</p></td></tr>
+</tbody>
+</table>
+
+<h1 seq="auto">关键函数</h1>
+<h2 seq="auto">应用层关键函数</h2>
+<table>
+<colgroup><col width="0.30"/><col width="0.18"/><col width="0.52"/></colgroup>
+<thead><tr><th><p>函数</p></th><th><p>文件</p></th><th><p>作用</p></th></tr></thead>
+<tbody>
+<tr><td><p>main / main_init</p></td><td><p>app/main.c</p></td><td><p>入口。main 完成低层初始化和调度器启动；main_init 任务编排整个启动流程：板级初始化 → UI → 欢迎页 → WiFi → 主页 → 业务定时器</p></td></tr>
+<tr><td><p>board_lowlevel_init / board_init</p></td><td><p>app/board.c</p></td><td><p>开启 GPIO/USART/I2C/SPI/TIM/DMA 时钟并启动 LSE 晶振；初始化延时、串口、RTC、AHT20，打印编译信息</p></td></tr>
+<tr><td><p>fputc</p></td><td><p>app/board.c</p></td><td><p>把 printf 重定向到 USART1，实现调试日志输出</p></td></tr>
+<tr><td><p>app_init</p></td><td><p>app/app.c</p></td><td><p>创建 5 个软件定时器并立即投递一轮任务到工作队列，启动全部周期业务</p></td></tr>
+<tr><td><p>time_sync</p></td><td><p>app/app.c</p></td><td><p>通过 ESP8266 SNTP 获取网络时间并写入 RTC；失败 1 秒后重试，成功后 1 小时再同步</p></td></tr>
+<tr><td><p>time_update</p></td><td><p>app/app.c</p></td><td><p>读取 RTC 时间，变化时刷新主页时间与日期显示</p></td></tr>
+<tr><td><p>wifi_update</p></td><td><p>app/app.c</p></td><td><p>轮询 WiFi 连接状态，连接/断开时刷新主页 SSID 显示</p></td></tr>
+<tr><td><p>inner_update</p></td><td><p>app/app.c</p></td><td><p>触发 AHT20 测量并读取温湿度，刷新室内温度与湿度显示</p></td></tr>
+<tr><td><p>outdoor_update</p></td><td><p>app/app.c</p></td><td><p>HTTP GET 心知天气 API，解析响应并刷新室外温度与天气图标</p></td></tr>
+<tr><td><p>workqueue_init / workqueue_run</p></td><td><p>app/workqueue.c</p></td><td><p>创建容量 16 的工作队列与任务；向队列投递工作项，由单任务串行执行，隔离耗时操作</p></td></tr>
+<tr><td><p>ui_init / ui_fill_color / ui_write_string / ui_draw_image</p></td><td><p>app/ui.c</p></td><td><p>创建 UI 渲染队列与任务；把填色/写字/绘图封装成消息投递，UI 任务内统一调用 ST7789 驱动</p></td></tr>
+<tr><td><p>wifi_init / wifi_wait_connect</p></td><td><p>app/wifi.c</p></td><td><p>初始化 ESP8266 与 SNTP；连接目标 WiFi 并轮询等待，失败均进入错误页</p></td></tr>
+<tr><td><p>parse_seniverse_response</p></td><td><p>app/weather.c</p></td><td><p>用字符串查找 + sscanf 解析心知天气 JSON，提取城市、天气文本、天气代码与温度</p></td></tr>
+<tr><td><p>main_page_display 及各 redraw 函数</p></td><td><p>app/page/main_page.c</p></td><td><p>绘制主页静态布局；按区域局部重绘 WiFi 名、时间、日期、室内温度/湿度、室外城市/温度/天气图标</p></td></tr>
+<tr><td><p>main_page_redraw_outdoor_weather_icon</p></td><td><p>app/page/main_page.c</p></td><td><p>把心知天气 code 映射为对应图标（晴/多云/雨/雪/雷阵雨等）</p></td></tr>
+<tr><td><p>welcome_page_display / wifi_page_display / error_page_display</p></td><td><p>app/page/</p></td><td><p>三个辅助页面：欢迎页、连接页、错误页（黄字提示错误信息）</p></td></tr>
+</tbody>
+</table>
+
+<h2 seq="auto">驱动层关键函数</h2>
+<table>
+<colgroup><col width="0.30"/><col width="0.18"/><col width="0.52"/></colgroup>
+<thead><tr><th><p>函数</p></th><th><p>文件</p></th><th><p>作用</p></th></tr></thead>
+<tbody>
+<tr><td><p>esp_at_init</p></td><td><p>driver/esp_at</p></td><td><p>初始化 USART2+DMA+中断与应答信号量，复位 ESP8266 并等待就绪</p></td></tr>
+<tr><td><p>esp_at_write_command</p></td><td><p>driver/esp_at</p></td><td><p>DMA 发送 AT 命令，阻塞等待 OK 应答；中断按行匹配 OK/ERROR/ready/busy</p></td></tr>
+<tr><td><p>esp_at_connect_wifi / esp_at_get_wifi_info</p></td><td><p>driver/esp_at</p></td><td><p>AT+CWJAP 连接热点；AT+CWSTATE/AT+CWJAP 查询连接状态、SSID、BSSID、信道、RSSI</p></td></tr>
+<tr><td><p>esp_at_sntp_init / esp_at_sntp_get_time</p></td><td><p>driver/esp_at</p></td><td><p>配置 SNTP 服务器；AT+CIPSNTPTIME 获取网络时间并解析为年月日时分秒星期</p></td></tr>
+<tr><td><p>esp_at_http_get</p></td><td><p>driver/esp_at</p></td><td><p>AT+HTTPCLIENT 发起 HTTP GET，返回响应缓冲区（含 JSON 正文）</p></td></tr>
+<tr><td><p>st7789_init</p></td><td><p>driver/st7789</p></td><td><p>初始化 SPI2+DMA+中断，配置寄存器序列、清屏、开背光</p></td></tr>
+<tr><td><p>st7789_fill_color</p></td><td><p>driver/st7789</p></td><td><p>以 DMA 单色模式填充指定矩形区域（页面底色/色块）</p></td></tr>
+<tr><td><p>st7789_write_string</p></td><td><p>driver/st7789</p></td><td><p>按 GB2312 判定逐字符绘制：ASCII 半角、中文全角，支持指定前景/背景色</p></td></tr>
+<tr><td><p>st7789_draw_image</p></td><td><p>driver/st7789</p></td><td><p>整幅位图 DMA 搬运到显存（图标、LOGO）</p></td></tr>
+<tr><td><p>rtc_init / rtc_set_time / rtc_get_time</p></td><td><p>driver/rtc</p></td><td><p>初始化硬件 RTC；写入/读取时间，通过连续两次回读一致避免数据撕裂</p></td></tr>
+<tr><td><p>aht20_init / aht20_start_measurement / aht20_read_measurement</p></td><td><p>driver/aht20</p></td><td><p>I2C2 初始化与传感器校准；触发测量、等待完成、读取 6 字节原始数据并换算温湿度</p></td></tr>
+<tr><td><p>tim_delay_init / tim_now / tim_delay_us</p></td><td><p>driver/tim_delay</p></td><td><p>TIM6 产生 1MHz 时基，提供微秒级延时与单调时间戳</p></td></tr>
+<tr><td><p>console_init / console_write</p></td><td><p>driver/console</p></td><td><p>USART1 115200 初始化；DMA 异步发送字符串</p></td></tr>
+<tr><td><p>led_init / led_set、key_init / key_read</p></td><td><p>driver/led、driver/key</p></td><td><p>预留的 LED 与按键（EXTI 中断）驱动，工程中暂未接入业务</p></td></tr>
+</tbody>
+</table>
+
+<h2 seq="auto">三条核心数据流</h2>
+<ul>
+<li><p>时间链：ESP8266 SNTP（esp_at_sntp_get_time）→ rtc_set_time 写入硬件 RTC → 每秒 time_update 读取并重绘时间/日期；</p></li>
+<li><p>室内链：aht20_start_measurement 触发测量 → 轮询等待 → aht20_read_measurement 换算 → 重绘温度与湿度；</p></li>
+<li><p>室外链：esp_at_http_get 请求心知天气 API → parse_seniverse_response 解析 JSON → 重绘室外温度与天气图标（按 code 映射）。</p></li>
+</ul>
+
+<h1 seq="auto">如何完成最终成果</h1>
+<h2 seq="auto">前置条件</h2>
+<p><b>硬件清单</b></p>
+<table>
+<colgroup><col width="0.34"/><col width="0.36"/><col width="0.30"/></colgroup>
+<thead><tr><th><p>器件</p></th><th><p>型号/规格</p></th><th><p>用途</p></th></tr></thead>
+<tbody>
+<tr><td><p>主控板</p></td><td><p>STM32F407VETx（Cortex-M4，512KB Flash）</p></td><td><p>系统主控</p></td></tr>
+<tr><td><p>显示屏</p></td><td><p>ST7789 彩屏 240x320（SPI 接口）</p></td><td><p>界面显示</p></td></tr>
+<tr><td><p>温湿度传感器</p></td><td><p>AHT20（I2C 接口）</p></td><td><p>室内环境采集</p></td></tr>
+<tr><td><p>WiFi 模块</p></td><td><p>ESP8266（串口 AT 固件，115200）</p></td><td><p>联网：校时/天气/状态</p></td></tr>
+<tr><td><p>调试下载器</p></td><td><p>ST-Link</p></td><td><p>烧录与调试</p></td></tr>
+<tr><td><p>时钟晶振</p></td><td><p>LSE 32.768kHz 外部晶振（板上已有）</p></td><td><p>RTC 时钟源</p></td></tr>
+</tbody>
+</table>
+<p><b>软件环境</b></p>
+<table>
+<colgroup><col width="0.34"/><col width="0.46"/><col width="0.20"/></colgroup>
+<thead><tr><th><p>软件</p></th><th><p>版本（已验证）</p></th><th><p>用途</p></th></tr></thead>
+<tbody>
+<tr><td><p>Keil MDK</p></td><td><p>MDK-ARM Professional 5.37</p></td><td><p>编译与下载</p></td></tr>
+<tr><td><p>编译器</p></td><td><p>ARMCC V5.06 update 7（build 960）</p></td><td><p>ARM 编译器</p></td></tr>
+<tr><td><p>器件包</p></td><td><p>Keil.STM32F4xx_DFP 3.1.1</p></td><td><p>STM32F4 设备支持</p></td></tr>
+<tr><td><p>ST-Link 驱动</p></td><td><p>随 Keil 安装</p></td><td><p>下载器</p></td></tr>
+<tr><td><p>串口助手</p></td><td><p>任意支持 115200 的工具</p></td><td><p>查看调试日志</p></td></tr>
+</tbody>
+</table>
+
+<h2 seq="auto">硬件接线</h2>
+<p>接线以驱动源码中的引脚定义为准：</p>
+<table>
+<colgroup><col width="0.26"/><col width="0.26"/><col width="0.48"/></colgroup>
+<thead><tr><th><p>外设</p></th><th><p>引脚</p></th><th><p>说明</p></th></tr></thead>
+<tbody>
+<tr><td><p>ST7789 屏</p></td><td><p>CLK=PB13、MOSI=PC3、MISO=PC2、CS=PE2、RESET=PE3、DC=PE4、BL=PE5</p></td><td><p>SPI2 接口 + GPIO 控制脚</p></td></tr>
+<tr><td><p>AHT20</p></td><td><p>SCL=PB10、SDA=PB11</p></td><td><p>I2C2，器件地址 0x70</p></td></tr>
+<tr><td><p>ESP8266</p></td><td><p>TX=PA2、RX=PA3</p></td><td><p>USART2，115200-8-N-1</p></td></tr>
+<tr><td><p>调试串口</p></td><td><p>TX=PA9、RX=PA10</p></td><td><p>USART1，115200，接串口助手</p></td></tr>
+<tr><td><p>RTC</p></td><td><p>PC14/PC15（LSE）</p></td><td><p>32.768kHz 外部晶振</p></td></tr>
+</tbody>
+</table>
+
+<h2 seq="auto">编译步骤与已验证结果</h2>
+<ol>
+<li><p>用 Keil MDK 打开工程文件 <code>mdk/stm32f407.uvprojx</code>；</p></li>
+<li><p>选择目标 <code>stm32f407</code>（工程已配置 STM32F407VETx、器件包、包含路径与宏定义）；</p></li>
+<li><p>点击 Build（F7）编译；</p></li>
+<li><p>查看编译输出：应得到 0 Error(s), 0 Warning(s)，产物为 <code>mdk/Objects/stm32f407.axf</code>。</p></li>
+</ol>
+<p>仓库 build log 记录的实际编译结果：Program Size: Code=32588 RO-data=261344 RW-data=264 ZI-data=110400，Total ROM 约 287.30KB（512KB Flash 足够；ZI 数据约 108KB，落在 128KB 片内 SRAM 内）。</p>
+
+<h2 seq="auto">烧录与上电验证</h2>
+<ol>
+<li><p>ST-Link 连接主控板 SWD 接口，目标供电；</p></li>
+<li><p>Keil 中点击 Download（F8）烧录，工程已配置 STM32F4xx 512KB Flash 算法；</p></li>
+<li><p>复位或重新上电，串口助手（115200）观察日志：先打印 Build Date，随后依次出现 AT/WIFI/SNTP 初始化成功、WiFi 连接成功、SNTP 校时、温湿度与天气刷新日志；</p></li>
+<li><p>屏幕按「欢迎页 → WiFi 连接页 → 主页」推进，主页显示正确的本地时间、日期、室内温度/湿度与室外城市天气。</p></li>
+</ol>
+
+<h2 seq="auto">需要自定义的配置</h2>
+<ul>
+<li><p>WiFi 信息：修改 <code>app/wifi.h</code> 中的 WIFI_SSID 与 WIFI_PASSWD 为你自己的热点名称和密码；</p></li>
+<li><p>天气接口：修改 <code>app/app.c</code> outdoor_update 中的心知天气 API 地址，替换为自己的 API key 与 location 参数；</p></li>
+<li><p>主页默认城市文字：修改 <code>app/page/main_page.c</code> main_page_display 中的城市名。</p></li>
+</ul>
+
+<h2 seq="auto">常见问题</h2>
+<callout emoji="⚠️" background-color="light-yellow" border-color="orange"><p>代码中的可观察行为：ESP8266 初始化失败时屏幕停在错误页并提示 wireless init failed；10 秒内连不上 WiFi 提示 wireless connect failed；SNTP 校时失败会 1 秒后自动重试。排查时优先确认 ESP8266 供电与串口接线、WiFi 名称密码是否正确、热点是否可用。</p></callout>
+
+<h1 seq="auto">资源与扩展</h1>
+<ul>
+<li><p>UI 设计稿：<code>resources/design/</code> 下 4 张页面设计图，可作为复刻样式参考；</p></li>
+<li><p>图标素材：<code>resources/images/</code> 下天气图标与 LOGO 原图（对应 app/image 下的位图数组）；</p></li>
+<li><p>字库工具：<code>tools/convert_chinese_font.py</code> 把字模文本（chinese.txt）转换为 C 结构体数组，用于生成自定义中文字库；</p></li>
+<li><p>教学视频：B 站《全开源手把手项目实战：基于FreeRTOS的stm32智能天气时钟》，含完整讲解。</p></li>
+</ul>
