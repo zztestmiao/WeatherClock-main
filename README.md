@@ -1,4 +1,4 @@
-# 智能天气时钟 · STM32F407 + FreeRTOS
+﻿# 智能天气时钟 · STM32F407 + FreeRTOS
 
 <p align="left">
   <img alt="MCU" src="https://img.shields.io/badge/MCU-STM32F407VET6-03234B?style=flat-square">

@@ -2,8 +2,8 @@
   "files.associations": {
     "*.h": "c"
   },
-  "files.autoGuessEncoding": false,
-  "files.encoding": "gb2312",
+  "files.autoGuessEncoding": true,
+  "files.encoding": "utf8",
   "C_Cpp_Runner.cCompilerPath": "gcc",
   "C_Cpp_Runner.cppCompilerPath": "g++",
   "C_Cpp_Runner.debuggerPath": "gdb",
